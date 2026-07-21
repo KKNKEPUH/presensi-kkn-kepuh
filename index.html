@@ -194,7 +194,7 @@
     <script>
         // 1. Konfigurasi Supabase (Database Online Pusat)
         const SUPABASE_URL = "https://jeqltmbptqwkfwboxbbc.supabase.co";
-        const SUPABASE_ANON_KEY = "sb_publishable_sTrTwZWS1UV94pI66_Pg1Q_XopKzn2dA_DI_SINI";
+        const SUPABASE_ANON_KEY = "sb_publishable_sTrTwZWS1UV94pI66_Pg1Q_XopKzn2dA";
         
         const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -248,7 +248,7 @@
             }
         }
 
-        // Tangkap Foto
+        // Tangkap Foto (Sudah di-kompresi & unmirror)
         function takeSnapshot() {
             const video = document.getElementById('webcam');
             const canvas = document.getElementById('photo-canvas');
@@ -258,20 +258,45 @@
                 return;
             }
 
-            canvas.width = video.videoWidth || 640;
-            canvas.height = video.videoHeight || 480;
+            // Batasi resolusi maksimal foto ke 480px agar ukuran file kecil (~30KB-60KB)
+            const maxDimension = 480;
+            let width = video.videoWidth || 640;
+            let height = video.videoHeight || 480;
+
+            if (width > height) {
+                if (width > maxDimension) {
+                    height *= maxDimension / width;
+                    width = maxDimension;
+                }
+            } else {
+                if (height > maxDimension) {
+                    width *= maxDimension / height;
+                    height = maxDimension;
+                }
+            }
+
+            canvas.width = width;
+            canvas.height = height;
             
             const ctx = canvas.getContext('2d');
+
+            // Balikkan foto canvas agar sesuai tampilan layar live (-scale-x)
+            ctx.translate(canvas.width, 0);
+            ctx.scale(-1, 1);
+
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-            currentPhotoBase64 = canvas.toDataURL('image/jpeg', 0.6);
+            // Reset transformasi canvas
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+            // Kompresi kualitas JPEG ke 0.4
+            currentPhotoBase64 = canvas.toDataURL('image/jpeg', 0.4);
 
             document.getElementById('photo-preview').src = currentPhotoBase64;
             document.getElementById('camera-container').classList.add('hidden');
             document.getElementById('photo-preview-container').classList.remove('hidden');
             document.getElementById('capture-btn').classList.add('hidden');
         }
-
         // Foto Ulang
         function retakePhoto() {
             currentPhotoBase64 = "";
