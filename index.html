@@ -8,6 +8,8 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Supabase JS Client (Penyimpanan Online) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
@@ -78,7 +80,7 @@
                     <div class="space-y-3">
                         <!-- Stream Kamera -->
                         <div id="camera-container" class="relative w-full h-64 bg-slate-900 rounded-xl overflow-hidden border border-slate-200 flex items-center justify-center">
-                            <video id="webcam" autoplay playsinline class="w-full h-full object-cover"></video>
+                            <video id="webcam" autoplay playsinline class="w-full h-full object-cover -scale-x-100"></video>
                             <canvas id="photo-canvas" class="hidden"></canvas>
                             <div id="camera-loading" class="absolute text-slate-400 text-xs flex items-center gap-2">
                                 <i data-lucide="camera" class="w-4 h-4 animate-pulse"></i> Membuka Kamera...
@@ -106,7 +108,7 @@
                 </div>
 
                 <button id="submit-btn" type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-xl font-semibold shadow-md transition-all flex items-center justify-center gap-2">
-                    <i data-lucide="send" class="w-4 h-4"></i> Kirim
+                    <i data-lucide="send" class="w-4 h-4"></i> Kirim Presensi
                 </button>
             </form>
 
@@ -190,9 +192,14 @@
 
     <!-- JavaScript LOGIC -->
     <script>
-        const ADMIN_PIN = "2007";
+        // 1. Konfigurasi Supabase (Database Online Pusat)
+        const SUPABASE_URL = "https://jeqltmbptqwkfwboxbbc.supabase.co";
+        const SUPABASE_ANON_KEY = "sb_publishable_sTrTwZWS1UV94pI66_Pg1Q_XopKzn2dA_DI_SINI";
+        
+        const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-        let records = JSON.parse(localStorage.getItem('kkn_records_db')) || [];
+        const ADMIN_PIN = "2007";
+        let records = [];
         let currentPhotoBase64 = "";
         let mediaStream = null;
 
@@ -201,10 +208,27 @@
             weekday: 'long', day: 'numeric', month: 'short', year: 'numeric'
         });
 
-        // Inisialisasi Kamera Otomatis Saat Halaman Dimuat
+        // Inisialisasi Kamera & Load Data dari Supabase Pusat
         window.addEventListener('DOMContentLoaded', () => {
             initCamera();
+            fetchSupabaseData();
         });
+
+        // Mengambil seluruh data dari database pusat Supabase
+        async function fetchSupabaseData() {
+            try {
+                const { data, error } = await db
+                    .from('presensi')
+                    .select('*')
+                    .order('created_at', { ascending: false });
+
+                if (error) throw error;
+                records = data || [];
+                renderAdminData();
+            } catch (err) {
+                console.error("Gagal mengambil data dari Supabase:", err);
+            }
+        }
 
         // Membuka Akses Kamera
         async function initCamera() {
@@ -224,7 +248,7 @@
             }
         }
 
-        // Tangkap Foto dari Video Kamera
+        // Tangkap Foto
         function takeSnapshot() {
             const video = document.getElementById('webcam');
             const canvas = document.getElementById('photo-canvas');
@@ -240,7 +264,7 @@
             const ctx = canvas.getContext('2d');
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-            currentPhotoBase64 = canvas.toDataURL('image/jpeg', 0.7);
+            currentPhotoBase64 = canvas.toDataURL('image/jpeg', 0.6);
 
             document.getElementById('photo-preview').src = currentPhotoBase64;
             document.getElementById('camera-container').classList.add('hidden');
@@ -248,7 +272,7 @@
             document.getElementById('capture-btn').classList.add('hidden');
         }
 
-        // Ambil Foto Ulang
+        // Foto Ulang
         function retakePhoto() {
             currentPhotoBase64 = "";
             document.getElementById('photo-preview-container').classList.add('hidden');
@@ -256,7 +280,7 @@
             document.getElementById('capture-btn').classList.remove('hidden');
         }
 
-        // Tab Switching Logic
+        // Tab Switching
         function switchTab(tab) {
             const memberTab = document.getElementById('tab-member');
             const adminTab = document.getElementById('tab-admin');
@@ -273,11 +297,12 @@
                 memberTab.className = 'tab-inactive flex-1 py-3 text-center transition-all flex items-center justify-center gap-2';
                 adminView.classList.remove('hidden');
                 memberView.classList.add('hidden');
+                fetchSupabaseData(); // Refresh data saat buka admin
             }
         }
 
-        // Submit Form Presensi
-        document.getElementById('attendance-form').addEventListener('submit', function(e) {
+        // Submit Form Presensi ke Supabase
+        document.getElementById('attendance-form').addEventListener('submit', async function(e) {
             e.preventDefault();
 
             if (!currentPhotoBase64) {
@@ -285,9 +310,12 @@
                 return;
             }
 
+            const btn = document.getElementById('submit-btn');
+            btn.disabled = true;
+            btn.textContent = "Mengirim...";
+
             const now = new Date();
-            const newRecord = {
-                id: Date.now(),
+            const newPayload = {
                 name: document.getElementById('input-name').value.trim(),
                 status: document.getElementById('input-status').value,
                 note: document.getElementById('input-note').value.trim(),
@@ -296,19 +324,27 @@
                 time: now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
             };
 
-            records.unshift(newRecord);
-            localStorage.setItem('kkn_records_db', JSON.stringify(records));
+            // Simpan ke Supabase Database Online
+            const { data, error } = await db.from('presensi').insert([newPayload]);
+
+            btn.disabled = false;
+            btn.innerHTML = `<i data-lucide="send" class="w-4 h-4"></i> Kirim Presensi`;
+
+            if (error) {
+                alert("⚠️ Gagal menyimpan ke database: " + error.message);
+                return;
+            }
 
             this.reset();
             retakePhoto();
 
             const statusMsg = document.getElementById('status-msg');
             statusMsg.className = "p-4 bg-emerald-100 border border-emerald-300 text-emerald-900 rounded-xl text-center text-sm font-medium mt-4";
-            statusMsg.textContent = "✅ Presensi berhasil dikirim! Terima kasih.";
+            statusMsg.textContent = "✅ Presensi berhasil tersimpan ke database pusat!";
             statusMsg.classList.remove('hidden');
             setTimeout(() => statusMsg.classList.add('hidden'), 4000);
 
-            renderAdminData();
+            fetchSupabaseData();
         });
 
         // Verifikasi PIN Admin
@@ -319,19 +355,18 @@
                 document.getElementById('admin-panel').classList.remove('hidden');
                 document.getElementById('pin-input').value = '';
                 document.getElementById('pin-error').classList.add('hidden');
-                renderAdminData();
+                fetchSupabaseData();
             } else {
                 document.getElementById('pin-error').classList.remove('hidden');
             }
         }
 
-        // Logout Admin
         function logoutAdmin() {
             document.getElementById('admin-panel').classList.add('hidden');
             document.getElementById('pin-gate').classList.remove('hidden');
         }
 
-        // Render Data Presensi
+        // Render Data Admin
         function renderAdminData() {
             document.getElementById('stat-total').textContent = records.length;
             document.getElementById('stat-hadir').textContent = records.filter(r => r.status === 'Hadir').length;
@@ -363,7 +398,7 @@
                         <span class="px-2 py-0.5 rounded text-[10px] font-bold ${
                             r.status === 'Hadir' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
                         }">${r.status}</span>
-                        <button onclick="deleteRecord(${r.id})" class="text-red-400 hover:text-red-600 p-1"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                        <button onclick="deleteRecord('${r.id}')" class="text-red-400 hover:text-red-600 p-1"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
                     </div>
                 </div>
             `).join('');
@@ -371,23 +406,25 @@
             lucide.createIcons();
         }
 
-        // Hapus Data Presensi
-        function deleteRecord(id) {
-            if (confirm("Hapus data presensi ini?")) {
-                records = records.filter(r => r.id !== id);
-                localStorage.setItem('kkn_records_db', JSON.stringify(records));
-                renderAdminData();
+        // Hapus Data dari Supabase
+        async function deleteRecord(id) {
+            if (confirm("Hapus data presensi ini dari server pusat?")) {
+                const { error } = await db.from('presensi').delete().eq('id', id);
+                if (error) {
+                    alert("Gagal menghapus: " + error.message);
+                } else {
+                    fetchSupabaseData();
+                }
             }
         }
 
-        // Modal Foto Full
         function openModal(src) {
             document.getElementById('modal-img').src = src;
             document.getElementById('image-modal').classList.remove('hidden');
         }
         function closeModal() { document.getElementById('image-modal').classList.add('hidden'); }
 
-        // Export ke Excel (Termasuk Gambar Foto Bukti)
+        // Export Excel
         function exportExcel() {
             if (records.length === 0) return alert('Belum ada data untuk diekspor!');
 
@@ -423,7 +460,7 @@
             a.click();
         }
 
-        // Print PDF (Termasuk Gambar Foto Bukti)
+        // Print PDF
         function exportPDF() {
             if (records.length === 0) return alert('Belum ada data untuk dicetak!');
             const printWin = window.open('', '_blank');
